@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+.venv/
+
+# MOABB 数据和训练结果保留在本地。
+data/
+outputs/
