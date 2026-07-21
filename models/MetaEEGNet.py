@@ -91,7 +91,10 @@ class MetaEEGNet(nn.Module):
             nn.ELU())
 
         feature_size = f2 * (samples // 32)
-        self.shared_classifier = nn.Linear(feature_size, n_classes)
+        # 两个空间分支分别使用独立分类器，避免 inner/outer loop 在分类器
+        # 参数上相互覆盖；时域骨干和可分离卷积仍然共享。
+        self.transformer_classifier = nn.Linear(feature_size, n_classes)
+        self.conv_classifier = nn.Linear(feature_size, n_classes)
 
     def forward_features(self,
                          x: torch.Tensor,
@@ -118,20 +121,25 @@ class MetaEEGNet(nn.Module):
 
     def forward(self, x: torch.Tensor, branch: str) -> torch.Tensor:
         features = self.forward_features(x, branch)
-        expected_features = self.shared_classifier.in_features
+        classifier = (
+            self.transformer_classifier
+            if branch == TRANSFORMER_BRANCH
+            else self.conv_classifier)
+        expected_features = classifier.in_features
         if features.shape[1] != expected_features:
             raise ValueError(
                 f"分类器期望{expected_features}维特征，实际为{features.shape[1]}。")
-        return self.shared_classifier(features)
+        return classifier(features)
 
     def inner_parameter_names(self) -> Tuple[str, ...]:
         """Inner loop 更新共享参数和 Transformer，不更新卷积分支。"""
         return tuple(
             name for name, _ in self.named_parameters()
-            if not name.startswith("conv_spatial."))
+            if not name.startswith(("conv_spatial.", "conv_classifier.")))
 
     def conv_finetune_parameter_names(self) -> Tuple[str, ...]:
         """测试微调时更新共享参数和三通道卷积，不更新 Transformer。"""
         return tuple(
             name for name, _ in self.named_parameters()
-            if not name.startswith("transformer_spatial."))
+            if not name.startswith(
+                ("transformer_spatial.", "transformer_classifier.")))
